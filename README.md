@@ -1,6 +1,6 @@
 # Australian Aviation Analysis
 
-Exploratory analysis of Australian aviation data for Virgin Australia strategy context, covering airport financials, passenger traffic, and on-time performance.
+Exploratory analysis of Australian aviation data covering airport financials, passenger traffic, and on-time performance.
 
 ## Datasets
 
