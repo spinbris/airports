@@ -1,0 +1,345 @@
+---
+title: "Australian Domestic Aviation — On-Time Performance"
+subtitle: "BITRE OTP Time Series, January 2010 – January 2026"
+date: today
+format:
+  html:
+    toc: true
+    toc-location: left
+    toc-depth: 3
+    embed-resources: true
+    code-fold: true
+    theme: flatly
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+```{r}
+#| label: setup
+#| code-fold: false
+
+library(tidyverse)
+library(lubridate)
+library(scales)
+library(knitr)
+
+otp_data    <- readRDS("data_raw/otp_data.rds")
+airport_mvt <- readRDS("data_raw/airport_movements.rds")
+
+# Major scheduled carriers — excludes the "All Airlines" aggregate row
+major_airlines <- c(
+  "Qantas",
+  "Jetstar",
+  "Virgin Australia",
+  "Virgin Australia Regional Airlines",
+  "Tigerair Australia",
+  "Rex Airlines",
+  "Regional Express"
+)
+
+otp_major <- otp_data |>
+  filter(airline %in% major_airlines)
+
+# Airport-level aggregate (all airlines combined) for airport comparisons
+accc_ports <- c("Sydney", "Melbourne", "Brisbane", "Perth")
+
+otp_by_airport <- otp_data |>
+  filter(airline == "All Airlines", departing_port %in% accc_ports) |>
+  summarise(
+    sectors_scheduled  = sum(sectors_scheduled,  na.rm = TRUE),
+    sectors_flown      = sum(sectors_flown,       na.rm = TRUE),
+    cancellations      = sum(cancellations,       na.rm = TRUE),
+    departures_on_time = sum(departures_on_time,  na.rm = TRUE),
+    .by = c(departing_port, date, year, month)
+  ) |>
+  mutate(
+    pct_on_time  = departures_on_time / sectors_flown      * 100,
+    pct_cancelled = cancellations     / sectors_scheduled  * 100
+  )
+```
+
+## Data overview
+
+The BITRE On-Time Performance series covers scheduled domestic jet services
+operated by Australia's major carriers. It records sectors scheduled and flown,
+cancellations, and on-time arrivals and departures (within 15 minutes of
+schedule) at the route × airline × month level.
+
+```{r}
+#| label: tbl-coverage
+#| tbl-cap: "Date coverage by airline"
+
+otp_data |>
+  filter(airline %in% major_airlines) |>
+  summarise(
+    From  = min(date),
+    To    = max(date),
+    Years = n_distinct(year),
+    .by   = airline
+  ) |>
+  arrange(From) |>
+  rename(Airline = airline) |>
+  kable()
+```
+
+---
+
+## Airline capacity — sectors flown
+
+### Annual sectors flown by airline
+
+Qantas Group (Qantas + Jetstar) dominates domestic capacity, with Virgin
+Australia as the principal competitor. Tigerair Australia's entry in 2007 and
+eventual absorption into Virgin in 2020 is visible as a brief capacity addition.
+Virgin Australia's collapse into voluntary administration in April 2020, and its
+subsequent restart as a smaller carrier, is the defining structural event in the
+series.
+
+```{r}
+#| label: fig-sectors-airline
+#| fig-cap: "Annual sectors flown by airline"
+
+otp_major |>
+  filter(route != "All Ports-All Ports") |>
+  summarise(
+    sectors_flown = sum(sectors_flown, na.rm = TRUE),
+    .by = c(airline, year)
+  ) |>
+  ggplot(aes(x = year, y = sectors_flown, colour = airline)) +
+  geom_line() +
+  scale_y_continuous(labels = comma) +
+  labs(x = NULL, y = "Sectors flown", colour = "Airline")
+```
+
+### Domestic market share — sectors flown
+
+```{r}
+#| label: fig-market-share
+#| fig-cap: "Domestic market share by sectors flown (annual)"
+
+otp_major |>
+  summarise(
+    sectors_flown = sum(sectors_flown, na.rm = TRUE),
+    .by = c(airline, year)
+  ) |>
+  mutate(share = sectors_flown / sum(sectors_flown), .by = year) |>
+  ggplot(aes(x = year, y = share, fill = airline)) +
+  geom_area() +
+  scale_y_continuous(labels = percent) +
+  labs(x = NULL, y = "Share of sectors", fill = "Airline")
+```
+
+---
+
+## On-time performance
+
+### On-time departure performance by airline
+
+The dashed line marks the 80% threshold that is commonly used as a benchmark
+for acceptable punctuality. Performance dipped industry-wide in 2022–23 as
+airlines ramped capacity rapidly while facing crew shortages and airport
+congestion in the post-COVID restart.
+
+```{r}
+#| label: fig-otp-airline
+#| fig-cap: "On-time departure performance by airline (annual)"
+
+otp_major |>
+  summarise(
+    sectors_flown      = sum(sectors_flown,       na.rm = TRUE),
+    departures_on_time = sum(departures_on_time,  na.rm = TRUE),
+    .by = c(airline, year)
+  ) |>
+  mutate(pct_on_time = departures_on_time / sectors_flown * 100) |>
+  ggplot(aes(x = year, y = pct_on_time, colour = airline)) +
+  geom_line() +
+  geom_hline(yintercept = 80, linetype = "dashed", colour = "grey50") +
+  labs(
+    subtitle = "Dashed line = 80% benchmark",
+    x = NULL, y = "On-time departures (%)", colour = "Airline"
+  )
+```
+
+### Cancellation rate by airline
+
+```{r}
+#| label: fig-cancellations
+#| fig-cap: "Cancellation rate by airline (annual)"
+
+otp_major |>
+  summarise(
+    sectors_scheduled = sum(sectors_scheduled, na.rm = TRUE),
+    cancellations     = sum(cancellations,     na.rm = TRUE),
+    .by = c(airline, year)
+  ) |>
+  mutate(pct_cancelled = cancellations / sectors_scheduled * 100) |>
+  ggplot(aes(x = year, y = pct_cancelled, colour = airline)) +
+  geom_line() +
+  labs(x = NULL, y = "Cancellations (%)", colour = "Airline")
+```
+
+---
+
+## Airport-level performance
+
+### On-time departures by airport (all airlines)
+
+Airport-level OTP reflects a mix of airline punctuality and airport
+infrastructure constraints. Sydney consistently underperforms relative to other
+capitals, partly due to the single runway constraint during peak periods.
+
+```{r}
+#| label: fig-otp-airport
+#| fig-cap: "On-time departure performance — ACCC airports, all airlines (monthly with smoothed trend)"
+
+otp_by_airport |>
+  ggplot(aes(x = date, y = pct_on_time, colour = departing_port)) +
+  geom_line(alpha = 0.3) +
+  geom_smooth(se = FALSE, span = 0.15) +
+  labs(
+    subtitle = "Raw monthly (faint) + smoothed trend",
+    x = NULL, y = "On-time departures (%)", colour = "Airport"
+  )
+```
+
+---
+
+## Bridging OTP and BITRE movements data
+
+### OTP sectors flown vs BITRE domestic outbound movements
+
+The OTP series records scheduled domestic departures only. BITRE
+`dom_outbound` is the correct comparator (both are departure counts), but
+includes freight, charter and general aviation not captured in OTP. The
+residual gap of roughly 10–20% varies by airport — Perth's larger gap reflects
+its significant resource-sector charter traffic.
+
+```{r}
+#| label: fig-otp-vs-bitre
+#| fig-cap: "OTP scheduled sectors vs BITRE domestic outbound movements — ACCC airports (monthly)"
+#| fig-height: 7
+
+port_to_airport <- c(
+  "Sydney"    = "SYDNEY",
+  "Melbourne" = "MELBOURNE",
+  "Brisbane"  = "BRISBANE",
+  "Perth"     = "PERTH"
+)
+
+otp_sectors_monthly <- otp_data |>
+  filter(airline == "All Airlines") |>
+  summarise(
+    sectors_scheduled = sum(sectors_scheduled, na.rm = TRUE),
+    sectors_flown     = sum(sectors_flown,     na.rm = TRUE),
+    .by = c(departing_port, date)
+  )
+
+otp_vs_mvt <- otp_sectors_monthly |>
+  filter(departing_port %in% names(port_to_airport)) |>
+  mutate(airport = port_to_airport[departing_port]) |>
+  left_join(
+    airport_mvt |> select(airport, date, dom_outbound),
+    join_by(airport, date)
+  )
+
+otp_vs_mvt |>
+  pivot_longer(
+    c(sectors_flown, dom_outbound),
+    names_to = "source", values_to = "movements"
+  ) |>
+  mutate(
+    source = if_else(
+      source == "sectors_flown",
+      "OTP (scheduled domestic departures)",
+      "BITRE (all domestic departures)"
+    )
+  ) |>
+  ggplot(aes(x = date, y = movements, colour = source)) +
+  geom_line(alpha = 0.7) +
+  scale_y_continuous(labels = comma) +
+  facet_wrap(~departing_port, scales = "free_y") +
+  labs(
+    subtitle = "Gap ≈ freight, charter & general aviation not in OTP",
+    x = NULL, y = "Movements / sectors", colour = "Source"
+  )
+```
+
+---
+
+## Virgin Australia — case study
+
+### OTP before, during and after administration
+
+Virgin Australia entered voluntary administration on 21 April 2020 and was
+acquired by Bain Capital in November 2020. The airline restarted as a leaner
+operation with a smaller fleet and network. On-time performance improved
+markedly in 2021 as the restart benefited from reduced congestion and a
+simplified network before deteriorating again with the industry-wide post-COVID
+operational squeeze.
+
+```{r}
+#| label: fig-va-otp
+#| fig-cap: "Virgin Australia — on-time departure performance (all VA brands combined)"
+
+va_otp <- otp_data |>
+  filter(str_detect(airline, "Virgin Australia")) |>
+  summarise(
+    sectors_flown      = sum(sectors_flown,       na.rm = TRUE),
+    departures_on_time = sum(departures_on_time,  na.rm = TRUE),
+    cancellations      = sum(cancellations,       na.rm = TRUE),
+    sectors_scheduled  = sum(sectors_scheduled,   na.rm = TRUE),
+    .by = date
+  ) |>
+  mutate(
+    pct_on_time   = departures_on_time / sectors_flown     * 100,
+    pct_cancelled = cancellations      / sectors_scheduled * 100,
+    era = case_when(
+      date < as.Date("2020-04-01") ~ "Pre-administration",
+      date < as.Date("2021-01-01") ~ "Administration / restart",
+      TRUE                         ~ "Post-administration"
+    )
+  )
+
+ggplot(va_otp, aes(x = date, y = pct_on_time, colour = era, group = 1)) +
+  geom_line() +
+  geom_vline(xintercept = as.Date("2020-04-01"),
+             linetype = "dashed", colour = "grey40") +
+  scale_colour_manual(
+    values = c(
+      "Pre-administration"      = "#2166ac",
+      "Administration / restart" = "#d7191c",
+      "Post-administration"     = "#1a9641"
+    )
+  ) +
+  labs(
+    subtitle = "Dashed line = voluntary administration (Apr 2020)",
+    x = NULL, y = "On-time departures (%)", colour = NULL
+  )
+```
+
+---
+
+## Top routes
+
+### Most-flown domestic routes
+
+```{r}
+#| label: fig-top-routes
+#| fig-cap: !expr paste0("Top 15 routes by sectors flown — ", max(otp_data$year) - 1)
+
+otp_data |>
+  filter(
+    airline == "All Airlines",
+    year    == max(year) - 1,
+    route   != "All Ports-All Ports"
+  ) |>
+  summarise(sectors_flown = sum(sectors_flown, na.rm = TRUE), .by = route) |>
+  slice_max(sectors_flown, n = 15) |>
+  mutate(route = fct_reorder(route, sectors_flown)) |>
+  ggplot(aes(x = sectors_flown, y = route)) +
+  geom_col(fill = "#2166ac") +
+  scale_x_continuous(labels = comma) +
+  labs(x = "Sectors flown", y = NULL)
+```

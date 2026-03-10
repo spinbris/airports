@@ -1,0 +1,24 @@
+# R
+.Rhistory
+.RData
+.Rproj.user/
+*.Rproj
+
+# renv
+renv/library/
+renv/staging/
+
+# Data files — exclude raw Excel and derived RDS (large/sensitive)
+data_raw/*.xlsx
+data_raw/*.xls
+data_raw/*.rds
+
+# Quarto outputs
+/_site/
+*.html
+*_files/
+.quarto/
+
+# OS
+.DS_Store
+Thumbs.db

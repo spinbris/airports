@@ -1,0 +1,354 @@
+---
+title: "Australian Airport Traffic — Monthly Analysis"
+subtitle: "BITRE WebMonthly Airport Statistics, January 2009 – September 2025"
+date: today
+format:
+  html:
+    toc: true
+    toc-location: left
+    toc-depth: 3
+    embed-resources: true
+    code-fold: true
+    theme: flatly
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+```{r}
+#| label: setup
+#| code-fold: false
+
+library(tidyverse)
+library(lubridate)
+library(scales)
+library(knitr)
+
+airport_pax <- readRDS("data_raw/airport_pax.rds")
+airport_mvt <- readRDS("data_raw/airport_movements.rds")
+otp_data    <- readRDS("data_raw/otp_data.rds")
+
+# Consistent ordering for the four ACCC-monitored airports
+airport_order <- c("SYDNEY", "MELBOURNE", "BRISBANE", "PERTH")
+
+accc_airports <- airport_pax |>
+  filter(airport %in% airport_order) |>
+  mutate(airport = factor(airport, levels = airport_order))
+
+accc_mvt <- airport_mvt |>
+  filter(airport %in% airport_order) |>
+  mutate(airport = factor(airport, levels = airport_order))
+```
+
+## Data overview
+
+The BITRE WebMonthly series covers **`r n_distinct(airport_pax$airport)`
+airports** from **`r format(min(airport_pax$date), "%B %Y")`** to
+**`r format(max(airport_pax$date), "%B %Y")`**, recording inbound, outbound and
+total passenger movements together with aircraft movement counts for domestic
+and international services. The table below summarises the most recent complete
+calendar year.
+
+```{r}
+#| label: tbl-overview
+#| tbl-cap: "Airport traffic summary — calendar year 2024"
+
+last_year <- year(max(airport_pax$date)) - 1  # last complete year
+
+airport_pax |>
+  filter(airport != "All Australian Airports", year == last_year) |>
+  summarise(
+    total_pax  = sum(total_total, na.rm = TRUE),
+    dom_pax    = sum(dom_total,   na.rm = TRUE),
+    intl_pax   = sum(intl_total,  na.rm = TRUE),
+    .by = airport
+  ) |>
+  left_join(
+    airport_mvt |>
+      filter(airport != "All Australian Airports", year == last_year) |>
+      summarise(
+        dom_mvt  = sum(dom_total,  na.rm = TRUE),
+        intl_mvt = sum(intl_total, na.rm = TRUE),
+        .by = airport
+      ),
+    join_by(airport)
+  ) |>
+  arrange(desc(total_pax)) |>
+  mutate(
+    intl_share = scales::percent(intl_pax / total_pax, accuracy = 0.1),
+    across(total_pax:intl_pax, ~ scales::comma(round(.x / 1e6, 2), suffix = "m")),
+    across(dom_mvt:intl_mvt,   ~ scales::comma(.x))
+  ) |>
+  rename(
+    Airport = airport,
+    `Total pax` = total_pax, `Dom pax` = dom_pax, `Intl pax` = intl_pax,
+    `Intl share` = intl_share,
+    `Dom movements` = dom_mvt, `Intl movements` = intl_mvt
+  ) |>
+  kable()
+```
+
+---
+
+## Passenger volumes
+
+### Total monthly passengers — ACCC airports
+
+Sydney consistently leads on total passengers, with Melbourne close behind.
+The sharp collapse in April 2020 from COVID-19 border closures and the
+subsequent recovery pattern are clearly visible across all four airports.
+
+```{r}
+#| label: fig-total-pax
+#| fig-cap: "Total monthly passengers — ACCC airports (Jan 2009 – Sep 2025)"
+
+accc_airports |>
+  ggplot(aes(x = date, y = total_total, colour = airport)) +
+  geom_line(alpha = 0.6) +
+  scale_y_continuous(labels = comma) +
+  labs(x = NULL, y = "Passengers", colour = "Airport")
+```
+
+### Domestic vs international split
+
+International traffic is proportionally most important at Sydney and Perth.
+Perth's international share reflects significant Asia-Pacific routes and
+fly-in fly-out resource sector traffic that sits outside the scheduled
+domestic market.
+
+```{r}
+#| label: fig-dom-intl
+#| fig-cap: "Domestic vs international passengers — ACCC airports"
+#| fig-height: 7
+
+accc_airports |>
+  select(airport, date, dom_total, intl_total) |>
+  pivot_longer(c(dom_total, intl_total), names_to = "type", values_to = "pax") |>
+  mutate(type = if_else(type == "dom_total", "Domestic", "International")) |>
+  ggplot(aes(x = date, y = pax, colour = type)) +
+  geom_line(alpha = 0.7) +
+  scale_y_continuous(labels = comma) +
+  facet_wrap(~airport, scales = "free_y") +
+  labs(x = NULL, y = "Passengers", colour = NULL)
+```
+
+### International share over time
+
+Sydney's international share is structurally higher (~35%) than Brisbane and
+Melbourne (~23–25%). Perth's share rose through the 2010s as Asian routes
+expanded, and has recovered post-COVID more slowly than domestic.
+
+```{r}
+#| label: fig-intl-share
+#| fig-cap: "International share of total passengers — ACCC airports"
+
+accc_airports |>
+  mutate(intl_share = intl_total / total_total) |>
+  ggplot(aes(x = date, y = intl_share, colour = airport)) +
+  geom_line(alpha = 0.6) +
+  scale_y_continuous(labels = percent) +
+  labs(x = NULL, y = "International share", colour = "Airport")
+```
+
+### Annual volumes — all reporting airports
+
+```{r}
+#| label: fig-all-airports
+#| fig-cap: "Annual total passengers — all reporting airports"
+#| fig-height: 7
+
+airport_pax |>
+  filter(airport != "All Australian Airports") |>
+  summarise(total_pax = sum(total_total, na.rm = TRUE), .by = c(airport, year)) |>
+  mutate(airport = fct_reorder(airport, total_pax, .fun = sum, .desc = TRUE)) |>
+  ggplot(aes(x = year, y = total_pax, colour = airport)) +
+  geom_line() +
+  scale_y_continuous(labels = comma) +
+  labs(x = NULL, y = "Passengers", colour = "Airport")
+```
+
+---
+
+## Aircraft movements
+
+### Domestic vs international outbound movements
+
+Aircraft movement counts follow passenger trends closely, but the ratio of
+passengers per movement (see next section) reveals changes in fleet mix and
+load factors over time.
+
+```{r}
+#| label: fig-movements
+#| fig-cap: "Domestic vs international outbound movements — ACCC airports"
+#| fig-height: 7
+
+accc_mvt |>
+  select(airport, date, dom_outbound, intl_outbound) |>
+  pivot_longer(c(dom_outbound, intl_outbound),
+               names_to = "type", values_to = "movements") |>
+  mutate(type = if_else(type == "dom_outbound", "Domestic", "International")) |>
+  ggplot(aes(x = date, y = movements, colour = type)) +
+  geom_line(alpha = 0.7) +
+  scale_y_continuous(labels = comma) +
+  facet_wrap(~airport, scales = "free_y") +
+  labs(x = NULL, y = "Aircraft movements", colour = NULL)
+```
+
+### Passengers per departure (load proxy)
+
+Dividing passengers by outbound movements gives an implied passengers-per-
+departure figure. This is not a true load factor (no seat count is available)
+but is a useful proxy for the combined effect of larger aircraft and higher
+load factors. The upward trend pre-COVID reflects fleet upgrades (e.g. 737
+replacing Fokker, A320 family growth) and improved yield management.
+
+```{r}
+#| label: fig-pax-per-dep
+#| fig-cap: "Passengers per departure (load proxy) — ACCC airports"
+#| fig-height: 5
+
+accc_airports |>
+  left_join(
+    accc_mvt |> select(airport, date, mvt_dom_out = dom_outbound, mvt_intl_out = intl_outbound),
+    join_by(airport, date)
+  ) |>
+  mutate(
+    pax_per_dom_dep  = dom_total  / mvt_dom_out,
+    pax_per_intl_dep = intl_total / mvt_intl_out
+  ) |>
+  pivot_longer(
+    c(pax_per_dom_dep, pax_per_intl_dep),
+    names_to = "type", values_to = "pax_per_dep"
+  ) |>
+  mutate(type = if_else(type == "pax_per_dom_dep", "Domestic", "International")) |>
+  ggplot(aes(x = date, y = pax_per_dep, colour = airport)) +
+  geom_line(alpha = 0.7) +
+  facet_wrap(~type, scales = "free_y") +
+  labs(
+    subtitle = "Higher = fuller planes and/or larger aircraft",
+    x = NULL, y = "Passengers per departure", colour = "Airport"
+  )
+```
+
+---
+
+## Seasonality
+
+### Pre-COVID domestic seasonality (2009–2019)
+
+Domestic travel peaks in January (summer school holidays) and July (winter
+school holidays), with a secondary peak in September–October. Brisbane and
+Sydney show a more pronounced January peak than Melbourne, reflecting
+stronger leisure and interstate holiday travel to Queensland.
+
+```{r}
+#| label: fig-seasonality
+#| fig-cap: "Average domestic passengers by calendar month — pre-COVID (2009–2019)"
+
+accc_airports |>
+  filter(year < 2020) |>
+  summarise(avg_pax = mean(dom_total, na.rm = TRUE), .by = c(airport, month)) |>
+  mutate(month_label = month(month, label = TRUE)) |>
+  ggplot(aes(x = month_label, y = avg_pax, colour = airport, group = airport)) +
+  geom_line() +
+  geom_point() +
+  scale_y_continuous(labels = comma) +
+  labs(x = NULL, y = "Average passengers", colour = "Airport")
+```
+
+---
+
+## COVID-19 impact and recovery
+
+Indexing to January 2020 = 100 allows direct comparison of the depth of the
+COVID collapse and the pace of recovery across airports. Perth recovered
+domestic traffic fastest, aided by the reopening of intrastate WA routes.
+Sydney and Melbourne, with higher international exposure, took longer to reach
+pre-COVID levels.
+
+```{r}
+#| label: fig-covid
+#| fig-cap: "Passenger recovery indexed to January 2020 = 100"
+
+base_jan2020 <- accc_airports |>
+  filter(year == 2020, month == 1) |>
+  select(airport, base = total_total)
+
+accc_airports |>
+  filter(date >= as.Date("2019-01-01")) |>
+  left_join(base_jan2020, join_by(airport)) |>
+  mutate(index = total_total / base * 100) |>
+  ggplot(aes(x = date, y = index, colour = airport)) +
+  geom_line() +
+  geom_hline(yintercept = 100, linetype = "dashed", colour = "grey50") +
+  labs(x = NULL, y = "Index (Jan 2020 = 100)", colour = "Airport")
+```
+
+---
+
+## Bridging BITRE and OTP data
+
+### Domestic passengers per OTP sector — ACCC airports
+
+The OTP dataset records scheduled domestic departures by airline. Dividing
+BITRE domestic passengers by OTP sectors flown gives a passengers-per-sector
+series that blends load factor and aircraft size effects. Values above ~150
+reflect the progressive transition to larger narrowbody aircraft (A320/737-800)
+from the mid-2010s onward.
+
+Note: OTP covers scheduled domestic services only; BITRE `dom_outbound` also
+includes freight, charter and general aviation. The ratio therefore slightly
+understates true passengers per scheduled departure.
+
+```{r}
+#| label: fig-pax-per-sector
+#| fig-cap: "Domestic passengers per OTP sector — ACCC airports (annual)"
+
+port_to_airport <- c(
+  "Sydney"    = "SYDNEY",
+  "Melbourne" = "MELBOURNE",
+  "Brisbane"  = "BRISBANE",
+  "Perth"     = "PERTH"
+)
+
+otp_annual <- otp_data |>
+  filter(
+    airline == "All Airlines",
+    departing_port %in% names(port_to_airport)
+  ) |>
+  summarise(
+    sectors_flown = sum(sectors_flown, na.rm = TRUE),
+    .by = c(departing_port, year)
+  ) |>
+  mutate(airport = port_to_airport[departing_port])
+
+# Sum all routes departing from each ACCC port (All Airlines aggregate)
+otp_annual <- otp_data |>
+  filter(
+    airline == "All Airlines",
+    departing_port %in% names(port_to_airport)
+  ) |>
+  summarise(
+    sectors_flown = sum(sectors_flown, na.rm = TRUE),
+    .by = c(departing_port, year)
+  ) |>
+  mutate(airport = port_to_airport[departing_port])
+
+bitre_annual <- accc_airports |>
+  summarise(dom_pax = sum(dom_total, na.rm = TRUE), .by = c(airport, year)) |>
+  mutate(airport = as.character(airport))
+
+bridge <- otp_annual |>
+  left_join(bitre_annual, join_by(airport, year)) |>
+  mutate(pax_per_sector = dom_pax / sectors_flown)
+
+bridge |>
+  ggplot(aes(x = year, y = pax_per_sector, colour = airport)) +
+  geom_line() +
+  geom_point() +
+  labs(
+    subtitle = "BITRE dom pax ÷ OTP sectors flown. Reflects aircraft size & load trends.",
+    x = NULL, y = "Passengers per sector", colour = "Airport"
+  )
+```
