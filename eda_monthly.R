@@ -59,7 +59,11 @@ accc_airports |>
 
 accc_airports |>
   select(airport, date, dom_total, intl_total) |>
-  pivot_longer(c(dom_total, intl_total), names_to = "type", values_to = "pax") |>
+  pivot_longer(
+    c(dom_total, intl_total),
+    names_to = "type",
+    values_to = "pax"
+  ) |>
   mutate(type = if_else(type == "dom_total", "Domestic", "International")) |>
   ggplot(aes(x = date, y = pax, colour = type)) +
   geom_line(alpha = 0.7) +
@@ -93,7 +97,10 @@ accc_airports |>
 # -------------------------------------------------------------------
 
 airport_pax |>
-  summarise(total_pax = sum(total_total, na.rm = TRUE), .by = c(airport, year)) |>
+  summarise(
+    total_pax = sum(total_total, na.rm = TRUE),
+    .by = c(airport, year)
+  ) |>
   mutate(airport = fct_reorder(airport, total_pax, .fun = sum, .desc = TRUE)) |>
   ggplot(aes(x = year, y = total_pax, colour = airport)) +
   geom_line() +
@@ -111,7 +118,11 @@ airport_pax |>
 
 accc_mvt |>
   select(airport, date, dom_outbound, intl_outbound) |>
-  pivot_longer(c(dom_outbound, intl_outbound), names_to = "type", values_to = "movements") |>
+  pivot_longer(
+    c(dom_outbound, intl_outbound),
+    names_to = "type",
+    values_to = "movements"
+  ) |>
   mutate(type = if_else(type == "dom_outbound", "Domestic", "International")) |>
   ggplot(aes(x = date, y = movements, colour = type)) +
   geom_line(alpha = 0.7) +
@@ -131,16 +142,29 @@ accc_mvt |>
 # Not true load factor (no seat count) but a useful capacity-utilisation proxy.
 
 accc_airports |>
-  left_join(accc_mvt |> select(airport, date, dom_outbound, intl_outbound),
-            join_by(airport, date)) |>
+  left_join(
+    accc_mvt |>
+      select(
+        airport,
+        date,
+        mvt_dom_out = dom_outbound,
+        mvt_intl_out = intl_outbound
+      ),
+    join_by(airport, date)
+  ) |>
   mutate(
-    pax_per_dom_dep = dom_total / dom_outbound,
-    pax_per_intl_dep = intl_total / intl_outbound
+    pax_per_dom_dep = dom_total / mvt_dom_out,
+    pax_per_intl_dep = intl_total / mvt_intl_out
   ) |>
   select(airport, date, pax_per_dom_dep, pax_per_intl_dep) |>
-  pivot_longer(c(pax_per_dom_dep, pax_per_intl_dep),
-               names_to = "type", values_to = "pax_per_dep") |>
-  mutate(type = if_else(type == "pax_per_dom_dep", "Domestic", "International")) |>
+  pivot_longer(
+    c(pax_per_dom_dep, pax_per_intl_dep),
+    names_to = "type",
+    values_to = "pax_per_dep"
+  ) |>
+  mutate(
+    type = if_else(type == "pax_per_dom_dep", "Domestic", "International")
+  ) |>
   ggplot(aes(x = date, y = pax_per_dep, colour = airport)) +
   geom_line(alpha = 0.7) +
   scale_y_continuous(labels = comma) +
@@ -205,20 +229,21 @@ accc_airports |>
 otp_data <- readRDS("data_raw/otp_data.rds")
 
 port_to_airport <- c(
-  "Sydney"    = "SYDNEY",
+  "Sydney" = "SYDNEY",
   "Melbourne" = "MELBOURNE",
-  "Brisbane"  = "BRISBANE",
-  "Perth"     = "PERTH"
+  "Brisbane" = "BRISBANE",
+  "Perth" = "PERTH"
 )
 
 otp_annual <- otp_data |>
   filter(
     airline == "All Airlines",
     departing_port %in% names(port_to_airport),
-    route == "All Ports-All Ports"
   ) |>
-  summarise(sectors_flown = sum(sectors_flown, na.rm = TRUE),
-            .by = c(departing_port, year)) |>
+  summarise(
+    sectors_flown = sum(sectors_flown, na.rm = TRUE),
+    .by = c(departing_port, year)
+  ) |>
   mutate(airport = port_to_airport[departing_port])
 
 bitre_annual <- accc_airports |>
